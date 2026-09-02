@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mern-todo
+  labels:
+    app.kubernetes.io/name: mern-todo
+    app.kubernetes.io/part-of: obsidian-cloud
