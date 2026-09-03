@@ -1,27 +1,29 @@
-﻿ 
-pipeline {
+﻿pipeline {
     agent any
 
     environment {
-        APP_NAME       = 'mern-obsidian-todo'
-        FRONTEND_IMAGE = "${APP_NAME}-frontend"
-        BACKEND_IMAGE  = "${APP_NAME}-backend"
-        IMAGE_TAG      = "${BUILD_NUMBER}"
-        PATH           = "${WORKSPACE}/bin:/usr/local/bin:${env.PATH}"
+        APP_NAME = 'mern-obsidian-todo'
+
+        ENVIRONMENT = 'development'
+
+        DOCKER_REGISTRY = 'docker.io/tharrunsiva'
+
+        IMAGE_TAG = 'latest'
+
+        NAMESPACE = 'mern-todo'
+
+        BACKEND_IMAGE = 'docker.io/tharrunsiva/mern-obsidian-todo-backend'
+
+        FRONTEND_IMAGE = 'docker.io/tharrunsiva/mern-obsidian-todo-frontend'
     }
 
     stages {
 
-        // ============================================================
-        // 1. WORKSPACE CLEAN & CHECKOUT
-        // ============================================================
-        stage('Workspace Clean & Init') {
+        stage('Checkout') {
             steps {
-                echo "========================================"
-                echo " Starting CI/CD Pipeline"
-                echo " Application: ${env.APP_NAME}"
-                echo " Build: ${env.BUILD_NUMBER}"
-                echo "========================================"
+                echo '========================================'
+                echo ' CHECKING OUT CODE FROM GITHUB'
+                echo '========================================'
 
                 deleteDir()
 
@@ -29,538 +31,419 @@ pipeline {
             }
         }
 
-
-        // ============================================================
-        // 2. VERIFY TOOLS
-        // ============================================================
-        stage('Verify & Setup CLI Tools') {
-            steps {
-                echo "========================================"
-                echo " VERIFYING CLI TOOLS"
-                echo "========================================"
-
-                sh '''
-                    set -e
-
-                    mkdir -p "${WORKSPACE}/bin"
-
-                    # ------------------------------------------------
-                    # Check Docker
-                    # ------------------------------------------------
-                    if command -v docker >/dev/null 2>&1; then
-                        echo "Docker found:"
-                        docker --version
-                    else
-                        echo "ERROR: Docker CLI not found."
-                        exit 1
-                    fi
-
-
-                    # ------------------------------------------------
-                    # Install kubectl if missing
-                    # ------------------------------------------------
-                    if ! command -v kubectl >/dev/null 2>&1; then
-
-                        echo "kubectl not found."
-                        echo "Downloading kubectl..."
-
-                        if command -v curl >/dev/null 2>&1; then
-
-                            curl -fsSL -o "${WORKSPACE}/bin/kubectl" \
-                            "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
-
-                        elif command -v wget >/dev/null 2>&1; then
-
-                            wget -qO "${WORKSPACE}/bin/kubectl" \
-                            "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
-
-                        else
-
-                            echo "ERROR: Neither curl nor wget is installed."
-                            exit 1
-
-                        fi
-
-                        chmod +x "${WORKSPACE}/bin/kubectl"
-                    fi
-
-
-                    # ------------------------------------------------
-                    # Kubernetes
-                    # ------------------------------------------------
-                    echo "kubectl version:"
-                    kubectl version --client
-
-
-                    # ------------------------------------------------
-                    # Node / npm
-                    # ------------------------------------------------
-                    if command -v node >/dev/null 2>&1; then
-                        echo "Node:"
-                        node --version
-                    else
-                        echo "ERROR: Node.js not found."
-                        exit 1
-                    fi
-
-
-                    if command -v npm >/dev/null 2>&1; then
-                        echo "NPM:"
-                        npm --version
-                    else
-                        echo "ERROR: npm not found."
-                        exit 1
-                    fi
-
-
-                    # ------------------------------------------------
-                    # Kubeconfig
-                    # ------------------------------------------------
-                    if [ -f "/var/jenkins_home/.kube/config" ]; then
-
-                        echo "Kubeconfig found:"
-                        echo "/var/jenkins_home/.kube/config"
-
-                        export KUBECONFIG="/var/jenkins_home/.kube/config"
-
-                    elif [ -f "$HOME/.kube/config" ]; then
-
-                        echo "Kubeconfig found:"
-                        echo "$HOME/.kube/config"
-
-                        export KUBECONFIG="$HOME/.kube/config"
-
-                    else
-
-                        echo "WARNING: Kubernetes kubeconfig not found."
-
-                    fi
-
-
-                    echo "========================================"
-                    echo " Working Directory"
-                    echo "========================================"
-
-                    pwd
-                    ls -la
-                '''
-            }
-        }
-
-
-        // ============================================================
-        // 3. CHECK PROJECT STRUCTURE
-        // ============================================================
-        stage('Verify Project Structure') {
+        stage('Verify Project') {
             steps {
                 sh '''
                     set -e
 
-                    echo "Checking project directories..."
+                    echo "Checking project structure..."
 
                     if [ ! -d "server" ]; then
-                        echo "ERROR: server directory not found."
+                        echo "ERROR: server folder not found!"
                         exit 1
                     fi
 
                     if [ ! -d "client" ]; then
-                        echo "ERROR: client directory not found."
+                        echo "ERROR: client folder not found!"
+                        exit 1
+                    fi
+
+                    if [ ! -d "k8s" ]; then
+                        echo "ERROR: k8s folder not found!"
                         exit 1
                     fi
 
                     if [ ! -f "server/package.json" ]; then
-                        echo "ERROR: server/package.json not found."
+                        echo "ERROR: server/package.json not found!"
                         exit 1
                     fi
 
                     if [ ! -f "client/package.json" ]; then
-                        echo "ERROR: client/package.json not found."
+                        echo "ERROR: client/package.json not found!"
                         exit 1
                     fi
 
-                    echo "Project structure verified."
-
                     echo ""
-                    echo "Server:"
-                    ls -la server
-
-                    echo ""
-                    echo "Client:"
-                    ls -la client
+                    echo "Project structure verified successfully."
                 '''
             }
         }
 
+        stage('Verify Tools') {
+            steps {
+                sh '''
+                    set -e
 
-        // ============================================================
-        // 4. CODE QUALITY & TESTS
-        // ============================================================
-        stage('Code Quality & Tests') {
+                    echo "========================================"
+                    echo " VERIFYING TOOLS"
+                    echo "========================================"
 
-            parallel {
+                    echo ""
+                    echo "Docker:"
+                    docker --version
 
-                // ----------------------------------------------------
-                // BACKEND
-                // ----------------------------------------------------
-                stage('Backend Tests') {
-                    steps {
+                    echo ""
+                    echo "Node:"
+                    node --version
 
-                        dir('server') {
+                    echo ""
+                    echo "NPM:"
+                    npm --version
 
-                            echo "========================================"
-                            echo " BACKEND DEPENDENCIES"
-                            echo "========================================"
+                    echo ""
+                    echo "Kubectl:"
+                    kubectl version --client
+                '''
+            }
+        }
 
-                            sh '''
-                                set -e
+        stage('Install Backend Dependencies') {
+            steps {
+                dir('server') {
+                    sh '''
+                        set -e
 
-                                npm install --legacy-peer-deps
+                        echo "========================================"
+                        echo " BACKEND NPM INSTALL"
+                        echo "========================================"
 
-                                echo "Backend dependencies installed."
+                        npm install --legacy-peer-deps
 
-                                if node -e "let p=require('./package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)"; then
-
-                                    echo "Running backend tests..."
-                                    npm test
-
-                                else
-
-                                    echo "No backend test script found."
-                                    echo "Skipping backend tests."
-
-                                fi
-                            '''
-                        }
-                    }
-                }
-
-
-                // ----------------------------------------------------
-                // FRONTEND
-                // ----------------------------------------------------
-                stage('Frontend Build Validation') {
-
-                    steps {
-
-                        dir('client') {
-
-                            echo "========================================"
-                            echo " FRONTEND BUILD"
-                            echo "========================================"
-
-                            sh '''
-                                set -e
-
-                                npm install --legacy-peer-deps
-
-                                echo "Frontend dependencies installed."
-
-                                npm run build
-
-                                echo "Frontend build completed successfully."
-                            '''
-                        }
-                    }
+                        echo "Backend dependencies installed successfully."
+                    '''
                 }
             }
         }
 
-
-        // ============================================================
-        // 5. DOCKER BUILD
-        // ============================================================
-        stage('Docker Build') {
-
+        stage('Build Frontend') {
             steps {
+                dir('client') {
+                    sh '''
+                        set -e
 
-                script {
+                        echo "========================================"
+                        echo " FRONTEND NPM INSTALL"
+                        echo "========================================"
+
+                        npm install --legacy-peer-deps
+
+                        echo ""
+                        echo "Building frontend..."
+
+                        npm run build
+
+                        echo ""
+                        echo "Frontend build completed successfully."
+                    '''
+                }
+            }
+        }
+
+        stage('Docker Build Backend') {
+            steps {
+                sh '''
+                    set -e
 
                     echo "========================================"
-                    echo " BUILDING DOCKER IMAGES"
+                    echo " BUILDING BACKEND DOCKER IMAGE"
                     echo "========================================"
 
+                    echo "Image:"
+                    echo "${BACKEND_IMAGE}:${IMAGE_TAG}"
 
-                    // ------------------------------------------------
-                    // Backend
-                    // ------------------------------------------------
-                    echo "Building Backend Image..."
-
-                    sh """
-                        docker build \
-                        -t ${env.BACKEND_IMAGE}:latest \
-                        -t ${env.BACKEND_IMAGE}:${env.IMAGE_TAG} \
+                    docker build \
+                        -t "${BACKEND_IMAGE}:${IMAGE_TAG}" \
+                        -t "${BACKEND_IMAGE}:latest" \
                         ./server
-                    """
 
+                    echo ""
+                    echo "Backend Docker image built successfully."
+                '''
+            }
+        }
 
-                    // ------------------------------------------------
-                    // Frontend
-                    // ------------------------------------------------
-                    echo "Building Frontend Image..."
+        stage('Docker Build Frontend') {
+            steps {
+                sh '''
+                    set -e
 
-                    sh """
-                        docker build \
-                        -t ${env.FRONTEND_IMAGE}:latest \
-                        -t ${env.FRONTEND_IMAGE}:${env.IMAGE_TAG} \
+                    echo "========================================"
+                    echo " BUILDING FRONTEND DOCKER IMAGE"
+                    echo "========================================"
+
+                    echo "Image:"
+                    echo "${FRONTEND_IMAGE}:${IMAGE_TAG}"
+
+                    docker build \
+                        -t "${FRONTEND_IMAGE}:${IMAGE_TAG}" \
+                        -t "${FRONTEND_IMAGE}:latest" \
                         ./client
-                    """
 
-
-                    echo "========================================"
-                    echo " DOCKER IMAGES CREATED"
-                    echo "========================================"
-
-                    sh """
-                        docker images | grep '${env.APP_NAME}' || true
-                    """
-                }
+                    echo ""
+                    echo "Frontend Docker image built successfully."
+                '''
             }
         }
 
-
-        // ============================================================
-        // 6. KUBERNETES DEPLOYMENT
-        // ============================================================
-        stage('Deploy to Kubernetes') {
-
+        stage('Docker Images') {
             steps {
+                sh '''
+                    echo "========================================"
+                    echo " DOCKER IMAGES"
+                    echo "========================================"
 
-                script {
-
-                    sh '''
-                        set -e
-
-                        echo "========================================"
-                        echo " KUBERNETES DEPLOYMENT"
-                        echo "========================================"
-
-
-                        # ------------------------------------------------
-                        # Configure kubeconfig
-                        # ------------------------------------------------
-                        if [ -f "/var/jenkins_home/.kube/config" ]; then
-
-                            export KUBECONFIG="/var/jenkins_home/.kube/config"
-
-                        elif [ -f "$HOME/.kube/config" ]; then
-
-                            export KUBECONFIG="$HOME/.kube/config"
-
-                        else
-
-                            echo "ERROR: Kubernetes kubeconfig not found."
-                            exit 1
-
-                        fi
-
-
-                        # ------------------------------------------------
-                        # Check cluster
-                        # ------------------------------------------------
-                        echo "Checking Kubernetes cluster..."
-
-                        kubectl cluster-info
-
-
-                        # ------------------------------------------------
-                        # Create namespace
-                        # ------------------------------------------------
-                        echo "Applying namespace..."
-
-                        kubectl apply -f k8s/00-namespace.yaml
-
-
-                        # ------------------------------------------------
-                        # Secrets / ConfigMap
-                        # ------------------------------------------------
-                        echo "Applying secrets and configmap..."
-
-                        kubectl apply -f k8s/01-secrets-configmap.yaml
-
-
-                        # ------------------------------------------------
-                        # MongoDB
-                        # ------------------------------------------------
-                        echo "Deploying MongoDB..."
-
-                        kubectl apply -f k8s/02-mongodb-deployment.yaml
-
-
-                        # ------------------------------------------------
-                        # Backend
-                        # ------------------------------------------------
-                        echo "Deploying Backend..."
-
-                        kubectl apply -f k8s/03-backend-deployment.yaml
-
-
-                        # ------------------------------------------------
-                        # Frontend
-                        # ------------------------------------------------
-                        echo "Deploying Frontend..."
-
-                        kubectl apply -f k8s/04-frontend-deployment.yaml
-
-
-                        # ------------------------------------------------
-                        # Ingress
-                        # ------------------------------------------------
-                        if [ -f "k8s/05-ingress.yaml" ]; then
-
-                            echo "Deploying Ingress..."
-
-                            kubectl apply -f k8s/05-ingress.yaml
-
-                        else
-
-                            echo "No ingress manifest found."
-
-                        fi
-
-
-                        echo "========================================"
-                        echo " WAITING FOR DEPLOYMENTS"
-                        echo "========================================"
-
-
-                        # ------------------------------------------------
-                        # Backend rollout
-                        # ------------------------------------------------
-                        kubectl rollout status \
-                            deployment/backend-deployment \
-                            -n mern-todo \
-                            --timeout=180s
-
-
-                        # ------------------------------------------------
-                        # Frontend rollout
-                        # ------------------------------------------------
-                        kubectl rollout status \
-                            deployment/frontend-deployment \
-                            -n mern-todo \
-                            --timeout=180s
-
-
-                        echo "========================================"
-                        echo " DEPLOYMENT COMPLETED"
-                        echo "========================================"
-                    '''
-                }
+                    docker images | grep "mern-obsidian-todo" || true
+                '''
             }
         }
 
-
-        // ============================================================
-        // 7. HEALTH CHECK
-        // ============================================================
-        stage('Post-Deploy Health Check') {
-
+        stage('Docker Push') {
             steps {
+                sh '''
+                    set -e
 
-                script {
+                    echo "========================================"
+                    echo " PUSHING IMAGES TO DOCKER HUB"
+                    echo "========================================"
 
-                    sh '''
-                        set -e
+                    echo "Pushing backend..."
 
-                        echo "========================================"
-                        echo " POST DEPLOYMENT HEALTH CHECK"
-                        echo "========================================"
+                    docker push "${BACKEND_IMAGE}:${IMAGE_TAG}"
 
+                    echo ""
+                    echo "Pushing frontend..."
 
-                        # Configure kubeconfig
-                        if [ -f "/var/jenkins_home/.kube/config" ]; then
+                    docker push "${FRONTEND_IMAGE}:${IMAGE_TAG}"
 
-                            export KUBECONFIG="/var/jenkins_home/.kube/config"
+                    echo ""
+                    echo "Docker images pushed successfully."
+                '''
+            }
+        }
 
-                        elif [ -f "$HOME/.kube/config" ]; then
+        stage('Kubernetes Connection') {
+            steps {
+                sh '''
+                    set -e
 
-                            export KUBECONFIG="$HOME/.kube/config"
+                    echo "========================================"
+                    echo " CHECKING KUBERNETES CONNECTION"
+                    echo "========================================"
 
-                        else
+                    if [ -f "/var/jenkins_home/.kube/config" ]; then
+                        export KUBECONFIG="/var/jenkins_home/.kube/config"
+                        echo "Using Jenkins kubeconfig."
 
-                            echo "ERROR: Kubernetes kubeconfig not found."
-                            exit 1
+                    elif [ -f "$HOME/.kube/config" ]; then
+                        export KUBECONFIG="$HOME/.kube/config"
+                        echo "Using user kubeconfig."
 
-                        fi
+                    else
+                        echo "ERROR: Kubernetes kubeconfig not found!"
+                        exit 1
+                    fi
 
+                    kubectl cluster-info
 
-                        echo ""
-                        echo "========================================"
-                        echo " PODS"
-                        echo "========================================"
+                    echo ""
+                    echo "Kubernetes connection successful."
+                '''
+            }
+        }
 
-                        kubectl get pods -n mern-todo -o wide
+        stage('Deploy Kubernetes') {
+            steps {
+                sh '''
+                    set -e
 
+                    echo "========================================"
+                    echo " DEPLOYING TO KUBERNETES"
+                    echo "========================================"
 
-                        echo ""
-                        echo "========================================"
-                        echo " SERVICES"
-                        echo "========================================"
+                    if [ -f "/var/jenkins_home/.kube/config" ]; then
+                        export KUBECONFIG="/var/jenkins_home/.kube/config"
 
-                        kubectl get services -n mern-todo
+                    elif [ -f "$HOME/.kube/config" ]; then
+                        export KUBECONFIG="$HOME/.kube/config"
+                    fi
 
+                    echo ""
+                    echo "Creating namespace..."
 
-                        echo ""
-                        echo "========================================"
-                        echo " DEPLOYMENTS"
-                        echo "========================================"
+                    kubectl apply \
+                        -f k8s/00-namespace.yaml
 
-                        kubectl get deployments -n mern-todo
+                    echo ""
+                    echo "Applying ConfigMap and Secrets..."
 
+                    kubectl apply \
+                        -f k8s/01-secrets-configmap.yaml
 
-                        echo ""
-                        echo "========================================"
-                        echo " INGRESS"
-                        echo "========================================"
+                    echo ""
+                    echo "Deploying MongoDB..."
 
-                        kubectl get ingress -n mern-todo || true
+                    kubectl apply \
+                        -f k8s/02-mongodb-deployment.yaml
 
+                    echo ""
+                    echo "Deploying Backend..."
 
-                        echo ""
-                        echo "========================================"
-                        echo " HEALTH CHECK COMPLETED"
-                        echo "========================================"
-                    '''
-                }
+                    kubectl apply \
+                        -f k8s/03-backend-deployment.yaml
+
+                    echo ""
+                    echo "Deploying Frontend..."
+
+                    kubectl apply \
+                        -f k8s/04-frontend-deployment.yaml
+
+                    echo ""
+                    echo "Deploying Ingress..."
+
+                    if [ -f "k8s/05-ingress.yaml" ]; then
+                        kubectl apply \
+                            -f k8s/05-ingress.yaml
+                    else
+                        echo "Ingress file not found. Skipping..."
+                    fi
+
+                    echo ""
+                    echo "Kubernetes manifests applied successfully."
+                '''
+            }
+        }
+
+        stage('Update Backend Image') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo " UPDATING BACKEND IMAGE"
+                    echo "========================================"
+
+                    kubectl set image \
+                        deployment/backend-deployment \
+                        backend=${BACKEND_IMAGE}:${IMAGE_TAG} \
+                        -n ${NAMESPACE}
+
+                    echo "Backend image updated."
+                '''
+            }
+        }
+
+        stage('Update Frontend Image') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo " UPDATING FRONTEND IMAGE"
+                    echo "========================================"
+
+                    kubectl set image \
+                        deployment/frontend-deployment \
+                        frontend=${FRONTEND_IMAGE}:${IMAGE_TAG} \
+                        -n ${NAMESPACE}
+
+                    echo "Frontend image updated."
+                '''
+            }
+        }
+
+        stage('Backend Rollout') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo " BACKEND ROLLOUT"
+                    echo "========================================"
+
+                    kubectl rollout status \
+                        deployment/backend-deployment \
+                        -n ${NAMESPACE} \
+                        --timeout=180s
+
+                    echo "Backend deployment successful."
+                '''
+            }
+        }
+
+        stage('Frontend Rollout') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo " FRONTEND ROLLOUT"
+                    echo "========================================"
+
+                    kubectl rollout status \
+                        deployment/frontend-deployment \
+                        -n ${NAMESPACE} \
+                        --timeout=180s
+
+                    echo "Frontend deployment successful."
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo " KUBERNETES HEALTH CHECK"
+                    echo "========================================"
+
+                    echo ""
+                    echo "PODS:"
+                    kubectl get pods -n ${NAMESPACE}
+
+                    echo ""
+                    echo "SERVICES:"
+                    kubectl get services -n ${NAMESPACE}
+
+                    echo ""
+                    echo "DEPLOYMENTS:"
+                    kubectl get deployments -n ${NAMESPACE}
+
+                    echo ""
+                    echo "INGRESS:"
+                    kubectl get ingress -n ${NAMESPACE} || true
+                '''
             }
         }
     }
 
-
-    // ================================================================
-    // POST ACTIONS
-    // ================================================================
     post {
 
-        always {
-
-            echo "========================================"
-            echo " CI/CD PIPELINE COMPLETED"
-            echo " Build Number: ${env.BUILD_NUMBER}"
-            echo "========================================"
-        }
-
-
         success {
-
-            echo "========================================================"
-            echo "        FULL-STACK DEPLOYMENT SUCCEEDED"
-            echo "========================================================"
-
-            echo "Application: ${env.APP_NAME}"
-            echo "Frontend Image: ${env.FRONTEND_IMAGE}:${env.IMAGE_TAG}"
-            echo "Backend Image: ${env.BACKEND_IMAGE}:${env.IMAGE_TAG}"
+            echo ''
+            echo '===================================================='
+            echo '       FULL STACK DEPLOYMENT SUCCESSFUL'
+            echo '===================================================='
+            echo "Application : ${APP_NAME}"
+            echo "Environment : ${ENVIRONMENT}"
+            echo "Backend     : ${BACKEND_IMAGE}:${IMAGE_TAG}"
+            echo "Frontend    : ${FRONTEND_IMAGE}:${IMAGE_TAG}"
+            echo '===================================================='
         }
-
 
         failure {
+            echo ''
+            echo '===================================================='
+            echo '          JENKINS PIPELINE FAILED'
+            echo '===================================================='
+            echo 'Check the Console Output for the exact error.'
+            echo '===================================================='
+        }
 
-            echo "========================================================"
-            echo "        CI/CD PIPELINE FAILED"
-            echo "========================================================"
-
-            echo "Please check the Jenkins console output."
+        always {
+            echo ''
+            echo 'CI/CD Pipeline execution completed.'
         }
     }
 }
- 
